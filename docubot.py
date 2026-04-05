@@ -85,22 +85,41 @@ class DocuBot:
         """
         Returns a relevance score for how well the text matches the query.
 
-        - Converts query into lowercase words (strips punctuation)
-        - Counts how many query words appear in the text
+        - Skips stop words (common words that carry no signal)
+        - For each meaningful query word, checks for an exact match OR a
+          prefix match against words in the text (handles generate/generated)
+        - Weights each match by IDF: words appearing in fewer docs score higher
         - Adds a bonus for exact phrase matches
         """
+        STOP_WORDS = {"where", "is", "the", "a", "an", "how", "do", "i",
+                      "what", "which", "does", "are", "in", "of", "to",
+                      "for", "and", "or", "it", "any", "there", "these"}
+
         query_lower = query.lower()
         text_lower = text.lower()
+        text_words = [w.strip(string.punctuation) for w in text_lower.split()]
 
-        words = query_lower.split()
-        word_score = 0
-        for word in words:
-            word = word.strip(string.punctuation)
-            if word and word in text_lower:
-                word_score += text_lower.count(word)
+        total_docs = max(len(self.documents), 1)
+        query_words = [w.strip(string.punctuation) for w in query_lower.split()]
 
-        phrase_bonus = 5 if query_lower in text_lower else 0
+        word_score = 0.0
+        for qword in query_words:
+            if not qword or qword in STOP_WORDS or len(qword) < 3:
+                continue
+            doc_freq = len(self.index.get(qword, [qword]))
+            idf = total_docs / doc_freq
+            # Exact match in text
+            if qword in text_lower:
+                word_score += text_lower.count(qword) * idf
+            else:
+                # Prefix match: "generated" matches "generate_access_token"
+                stem = qword[:max(4, len(qword) - 2)]
+                for tw in text_words:
+                    if tw.startswith(stem):
+                        word_score += 0.5 * idf
+                        break
 
+        phrase_bonus = 10 if query_lower in text_lower else 0
         return word_score + phrase_bonus
 
     def _split_into_paragraphs(self, text):
@@ -165,7 +184,7 @@ class DocuBot:
     # Answering Modes
     # -----------------------------------------------------------
 
-    def answer_retrieval_only(self, query, top_k=3):
+    def answer_retrieval_only(self, query, top_k=5):
         """
         Phase 1 retrieval only mode.
         Returns raw snippets and filenames with no LLM involved.
@@ -181,7 +200,7 @@ class DocuBot:
 
         return "\n---\n".join(formatted)
 
-    def answer_rag(self, query, top_k=3):
+    def answer_rag(self, query, top_k=5):
         """
         Phase 2 RAG mode.
         Uses student retrieval to select snippets, then asks Gemini
