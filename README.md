@@ -1,82 +1,111 @@
 # DocuBot
 
-DocuBot is a small documentation assistant that helps answer developer questions about a codebase.  
-It can operate in three different modes:
+DocuBot is a lightweight retrieval-augmented documentation assistant that helps answer developer questions about a codebase. It demonstrates the difference between naive LLM generation, keyword-based retrieval, and full RAG (Retrieval-Augmented Generation).
 
-1. **Naive LLM mode**  
-   Sends the entire documentation corpus to a Gemini model and asks it to answer the question.
+It operates in three modes:
 
-2. **Retrieval only mode**  
-   Uses a simple indexing and scoring system to retrieve relevant snippets without calling an LLM.
+1. **Naive LLM mode** — Sends only the developer's question to Gemini. No docs are provided. The model answers from general training knowledge, which can produce fluent but unreliable responses.
 
-3. **RAG mode (Retrieval Augmented Generation)**  
-   Retrieves relevant snippets, then asks Gemini to answer using only those snippets.
+2. **Retrieval only mode** — Uses a custom inverted index and IDF-weighted scoring system to retrieve relevant paragraph-level snippets from the docs. No LLM involved.
 
-The docs folder contains realistic developer documents (API reference, authentication notes, database notes), but these files are **just text**. They support retrieval experiments and do not require students to set up any backend systems.
+3. **RAG mode** — Retrieves the top-k snippets first, then passes them to Gemini with strict grounding instructions. The model is told to answer only from the provided snippets or say "I do not know."
+
+---
+
+## How Retrieval Works
+
+The retrieval pipeline is implemented in `docubot.py`:
+
+- **Inverted index** — On startup, every document is tokenized (lowercased, punctuation stripped) and mapped to a `{ word: [filenames] }` index for fast candidate lookup.
+- **Paragraph-level splitting** — Documents are split on blank lines into individual paragraphs, so only the most relevant section is returned rather than an entire file.
+- **IDF-weighted scoring** — Each query word is weighted by inverse document frequency: words that appear in fewer documents are more informative and score higher. Stop words are filtered out.
+- **Prefix matching** — Query words are also matched against word prefixes in the text (e.g. `generated` matches `generate_access_token`), handling common stemming cases without external libraries.
+- **Top-k selection** — Paragraphs are ranked by score and the top 5 are returned.
+
+---
+
+## Project Structure
+
+```
+module4-docubot/
+├── docubot.py          # Core retrieval pipeline (index, scoring, retrieve, answer)
+├── main.py             # CLI — runs all three modes interactively
+├── llm_client.py       # Gemini API wrapper for naive and RAG generation
+├── dataset.py          # Sample queries and fallback doc corpus
+├── evaluation.py       # Retrieval hit-rate evaluation harness
+├── model_card.md       # Observations comparing all three modes
+├── requirements.txt
+├── .env.example
+└── docs/
+    ├── API_REFERENCE.md
+    ├── AUTH.md
+    ├── DATABASE.md
+    └── SETUP.md
+```
 
 ---
 
 ## Setup
 
-### 1. Install Python dependencies
+### 1. Install dependencies
 
-    pip install -r requirements.txt
+```bash
+pip install -r requirements.txt
+```
 
-### 2. Configure environment variables
+### 2. Configure your Gemini API key
 
-Copy the example file:
+```bash
+cp .env.example .env
+```
 
-    cp .env.example .env
+Edit `.env`:
 
-Then edit `.env` to include your Gemini API key:
+```
+GEMINI_API_KEY=your_api_key_here
+```
 
-    GEMINI_API_KEY=your_api_key_here
-
-If you do not set a Gemini key, you can still run retrieval only mode.
+Get a key at [aistudio.google.com/app/apikeys](https://aistudio.google.com/app/apikeys).  
+Without a key, Retrieval Only mode (Mode 2) still works fully.
 
 ---
 
 ## Running DocuBot
 
-Start the program:
-
-    python main.py
+```bash
+python main.py
+```
 
 Choose a mode:
 
-- **1**: Naive LLM (Gemini reads the full docs)  
-- **2**: Retrieval only (no LLM)  
-- **3**: RAG (retrieval + Gemini)
+- **1** — Naive LLM (Gemini answers with no docs, from general knowledge)
+- **2** — Retrieval only (no LLM, returns ranked paragraph snippets)
+- **3** — RAG (retrieval + Gemini, grounded answers with citations)
 
-You can use built in sample queries or type your own.
-
----
-
-## Running Retrieval Evaluation (optional)
-
-    python evaluation.py
-
-This prints simple retrieval hit rates for sample queries.
+Press Enter to run all built-in sample queries, or type a custom question.
 
 ---
 
-## Modifying the Project
+## Running Retrieval Evaluation
 
-You will primarily work in:
+```bash
+python evaluation.py
+```
 
-- `docubot.py`  
-  Implement or improve the retrieval index, scoring, and snippet selection.
+Prints per-query hit/miss results and an overall hit rate against expected source files.
 
-- `llm_client.py`  
-  Adjust the prompts and behavior of LLM responses.
+---
 
-- `dataset.py`  
-  Add or change sample queries for testing.
+## Key Files
+
+- **`docubot.py`** — Retrieval index, scoring, and snippet selection logic
+- **`llm_client.py`** — Gemini prompt design and grounding instructions
+- **`model_card.md`** — Completed observations comparing all three modes
 
 ---
 
 ## Requirements
 
 - Python 3.9+
-- A Gemini API key for LLM features (only needed for modes 1 and 3)
-- No database, no server setup, no external services besides LLM calls
+- Gemini API key (only needed for Modes 1 and 3)
+- No database, no server, no external services beyond Gemini API calls
