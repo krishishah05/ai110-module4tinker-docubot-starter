@@ -9,6 +9,9 @@ Core DocuBot class responsible for:
 
 import os
 import glob
+import re
+import string
+
 
 class DocuBot:
     def __init__(self, docs_folder="docs", llm_client=None):
@@ -50,21 +53,28 @@ class DocuBot:
 
     def build_index(self, documents):
         """
-        TODO (Phase 1):
-        Build a tiny inverted index mapping lowercase words to the documents
+        Builds a tiny inverted index mapping lowercase words to the documents
         they appear in.
 
-        Example structure:
+        Structure:
         {
             "token": ["AUTH.md", "API_REFERENCE.md"],
             "database": ["DATABASE.md"]
         }
 
-        Keep this simple: split on whitespace, lowercase tokens,
-        ignore punctuation if needed.
+        Splits on whitespace, lowercases tokens, strips punctuation.
         """
         index = {}
-        # TODO: implement simple indexing
+        for filename, text in documents:
+            words = text.lower().split()
+            for word in words:
+                word = word.strip(string.punctuation)
+                if not word:
+                    continue
+                if word not in index:
+                    index[word] = []
+                if filename not in index[word]:
+                    index[word].append(filename)
         return index
 
     # -----------------------------------------------------------
@@ -73,27 +83,83 @@ class DocuBot:
 
     def score_document(self, query, text):
         """
-        TODO (Phase 1):
-        Return a simple relevance score for how well the text matches the query.
+        Returns a relevance score for how well the text matches the query.
 
-        Suggested baseline:
-        - Convert query into lowercase words
-        - Count how many appear in the text
-        - Return the count as the score
+        - Converts query into lowercase words (strips punctuation)
+        - Counts how many query words appear in the text
+        - Adds a bonus for exact phrase matches
         """
-        # TODO: implement scoring
-        return 0
+        query_lower = query.lower()
+        text_lower = text.lower()
+
+        words = query_lower.split()
+        word_score = 0
+        for word in words:
+            word = word.strip(string.punctuation)
+            if word and word in text_lower:
+                word_score += text_lower.count(word)
+
+        phrase_bonus = 5 if query_lower in text_lower else 0
+
+        return word_score + phrase_bonus
+
+    def _split_into_paragraphs(self, text):
+        """
+        Splits a document into paragraphs separated by blank lines.
+        Filters out very short or empty paragraphs.
+        """
+        paragraphs = re.split(r'\n\s*\n', text)
+        return [p.strip() for p in paragraphs if len(p.strip()) > 30]
 
     def retrieve(self, query, top_k=3):
         """
-        TODO (Phase 1):
-        Use the index and scoring function to select top_k relevant document snippets.
+        Uses the index and scoring function to select top_k relevant document
+        snippets. Returns a list of (filename, snippet_text) sorted by score
+        descending.
 
-        Return a list of (filename, text) sorted by score descending.
+        Retrieves at the paragraph level for precision: each document is split
+        into paragraphs and the top-scoring paragraphs are returned.
         """
+        if not self.documents:
+            return []
+
+        # Use the index to find candidate documents
+        query_words = [w.strip(string.punctuation).lower() for w in query.split() if w.strip(string.punctuation)]
+        candidate_files = set()
+        for word in query_words:
+            if word in self.index:
+                candidate_files.update(self.index[word])
+
+        # Fall back to all documents if index lookup found nothing
+        if not candidate_files:
+            candidates = self.documents
+        else:
+            candidates = [(fname, text) for fname, text in self.documents if fname in candidate_files]
+
+        # Score at the paragraph level
+        scored = []
+        for filename, text in candidates:
+            paragraphs = self._split_into_paragraphs(text)
+            if not paragraphs:
+                score = self.score_document(query, text)
+                if score > 0:
+                    scored.append((score, filename, text[:500]))
+                continue
+            for para in paragraphs:
+                score = self.score_document(query, para)
+                if score > 0:
+                    scored.append((score, filename, para))
+
+        # Sort by score descending and return top_k
+        scored.sort(key=lambda x: x[0], reverse=True)
+
         results = []
-        # TODO: implement retrieval logic
-        return results[:top_k]
+        for score, filename, snippet in scored:
+            results.append((filename, snippet))
+            if len(results) >= top_k:
+                break
+
+        return results
 
     # -----------------------------------------------------------
     # Answering Modes
